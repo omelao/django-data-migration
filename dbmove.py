@@ -44,13 +44,23 @@ def db_migrate(model):
             if hasattr(root_field, 'auto_now_add') and root_field.auto_now_add == True or hasattr(root_field, 'auto_now') and root_field.auto_now == True:
                 auto_now.append( root_field.name )
 
+        is_postgres = 'postgresql' in db_destination or connections[db_destination].vendor == 'postgresql'
+
         for i in range(0, len(items), 1000):
             chunk_items = items[i:i+1000]
-            if len( auto_now ) > 0:
-                with suppress_auto_now(model, auto_now ):
-                    model.objects.using( db_destination ).bulk_create(chunk_items)
+        
+            if len(auto_now) > 0:
+                with suppress_auto_now(model, auto_now):
+                    model.objects.using(db_destination).bulk_create(chunk_items)
+                
+                if not is_postgres:
+                    now = timezone.now()
+                    for obj in chunk_items:
+                        for field_name in auto_now:
+                            setattr(obj, field_name, now)
+                    model.objects.using(db_destination).bulk_update(chunk_items, auto_now)
             else:
-                model.objects.using( db_destination ).bulk_create(chunk_items)
+                model.objects.using(db_destination).bulk_create(chunk_items)
 
 
 @contextmanager
@@ -95,11 +105,22 @@ class Command(BaseCommand):
             except:
                 continue
 
-        for table in tables:
-            with connections[ db_destination ].cursor() as cursor:
+        for model in seen_models:
+            meta = model._meta
+            pk_field = meta.pk
+            if not isinstance(pk_field, models.AutoField) and not isinstance(pk_field, models.BigAutoField):
+                continue 
+            table = meta.db_table
+            sequence_name = f"{table}_{pk_field.column}_seq"
+        
+            with connections[db_destination].cursor() as cursor:
                 try:
-                    cursor.execute( "select setval('" + table + "_id_seq', max(id)) from " + table )
-                except:
+                    cursor.execute(
+                        f"SELECT setval(%s, (SELECT MAX({pk_field.column}) FROM {table}), true);",
+                        [sequence_name]
+                    )
+                except Exception as e:
+                    print(f"Error fixing sequency {table}: {e}")
                     continue
 
-        print( 'Importados:', len(imported), imported )
+        print( 'Migrated:', len(imported), imported )
