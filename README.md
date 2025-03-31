@@ -1,5 +1,6 @@
-# django-db-switcher
-Django script to switch/move to a new database.
+# django-data-migration
+
+Django script to switch/move data to a new database type.
 
 Dump database to a json file is not a good option and this is lazy, so I had to write this script.
 
